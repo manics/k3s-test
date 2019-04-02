@@ -4,7 +4,7 @@
 Vagrant.configure("2") do |config|
   config.vm.box = "centos/7"
 
-  config.vm.network "forwarded_port", guest: 6443, host: 26443
+  config.vm.network "forwarded_port", guest: 6443, host: 6443
   config.vm.network "forwarded_port", guest: 443, host: 20443
   config.vm.network "forwarded_port", guest: 80, host: 20080
 
