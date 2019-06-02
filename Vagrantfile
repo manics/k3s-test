@@ -19,12 +19,16 @@ Vagrant.configure("2") do |config|
     vb.memory = "3172"
     vb.cpus = 3
   end
+  config.vm.provider "libvirt" do |lv|
+    lv.memory = "3172"
+    lv.cpus = 3
+  end
 
   config.vm.provision "shell",
     path: "install.sh"
 end
 
 # Obtain kubeconfig file:
-# vagrant ssh -- cat /etc/rancher/k3s/k3s.yaml > k3s.yaml
+# vagrant ssh -- sudo cat /etc/rancher/k3s/k3s.yaml > k3s.yaml
 # or
-# vagrant ssh -- sed s/localhost/192.168.99.100/ /etc/rancher/k3s/k3s.yaml > k3s.yaml
+# vagrant ssh -- sudo sed s/localhost/192.168.99.100/ /etc/rancher/k3s/k3s.yaml > k3s.yaml
