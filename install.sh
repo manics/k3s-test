@@ -30,9 +30,12 @@ else
   curl -sSL https://get.helm.sh/helm-v$HELM_VERSION-linux-amd64.tar.gz | tar -xz -C /usr/local/bin/ --strip-components 1 linux-amd64/helm
 fi
 chmod a+x /usr/local/bin/helm
+ln -s ../bin/helm /usr/local/sbin/helm
 
 if [ "${HELM_VERSION#3.}" = "$HELM_VERSION" ]; then
   # Helm 2
+  kubectl --namespace kube-system create serviceaccount tiller
+  kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
   helm --kubeconfig /etc/rancher/k3s/k3s.yaml init --service-account tiller
 fi
 
