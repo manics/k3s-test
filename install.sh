@@ -1,57 +1,69 @@
 #!/bin/sh
-set -eu
+# Based on
+# https://github.com/jupyterhub/zero-to-jupyterhub-k8s/blob/08c13609c1d0c6cb07d45d49d0a876100cf941eb/ci/common
 
-K3S_VERSION=0.6.0-rc5
-K3S_SERVER_FLAGS="--tls-san 192.168.99.100"
-LOCAL_PROVISIONER_VERSION=0.0.9
-#HELM_VERSION=3.0.0-alpha.1
-HELM_VERSION=2.14.1
+set -eux
 
-if [ -f /etc/centos-release ]; then yum install -y -q policycoreutils-python; fi
+K3S_VERSION=v1.19.2+k3s1
+HELM_VERSION=v3.3.0
+IP_ADDRESS=`ip -o -4 addr show eth0 | awk '{print $4}' | cut -d/ -f1`
+K3S_SERVER_FLAGS="--tls-san $IP_ADDRESS"
 
-curl -sfL https://get.k3s.io -o install-k3s.sh
-INSTALL_K3S_VERSION=v$K3S_VERSION INSTALL_K3S_EXEC="$K3S_SERVER_FLAGS" sh install-k3s.sh
+if [ -f /etc/centos-release ]; then
+  # https://rancher.com/docs/k3s/latest/en/advanced/#experimental-selinux-support
+  yum install -y -q \
+    policycoreutils-python \
+    container-selinux selinux-policy-base \
+    https://rpm.rancher.io/k3s-selinux-0.1.1-rc1.el7.noarch.rpm
+fi
+
+# Disable the K3s Network Policy controller, install calico instead
+curl -sfL https://get.k3s.io | \
+  INSTALL_K3S_VERSION=${K3S_VERSION} sh -s - \
+  --tls-san ${IP_ADDRESS} \
+  --write-kubeconfig-mode=644 \
+  --disable metrics-server \
+  --disable traefik \
+  --disable-network-policy \
+  --flannel-backend=none \
+
+  # --docker
+
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 export PATH=/usr/local/bin:$PATH
-while [ `kubectl get nodes -o jsonpath='{range .items[*]}{@.metadata.name}:{range @.status.conditions[*]}{@.type}={@.status};{end}{end}' | grep 'Ready=True' | wc -l` -lt 1 ]; do echo -n .; sleep 1; done
 
-# Dynamic storage
-kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v$LOCAL_PROVISIONER_VERSION/deploy/local-path-storage.yaml
-kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+# Calico as CNI for full NetworkPolicy support
+curl -sfL https://docs.projectcalico.org/v3.14/manifests/calico.yaml \
+  | sed '/"type": "calico"/a\
+    "container_settings": {\
+      "allow_ip_forwarding": true\
+    },' \
+  | kubectl apply -f -
+
+# Wait for Calico and CoreDNS
+kubectl rollout status --watch --timeout 300s daemonset/calico-node -n kube-system
+kubectl rollout status --watch --timeout 300s deployment/calico-kube-controllers -n kube-system
+kubectl rollout status --watch --timeout 300s deployment/coredns -n kube-system
+
+# Install Helm
+curl -sf https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | DESIRED_VERSION=${HELM_VERSION} bash
+
+# Create a kubeconfig with the external IP
+sed s/127.0.0.1/${IP_ADDRESS}/ /etc/rancher/k3s/k3s.yaml > /etc/rancher/k3s/k3s-ext.yaml
 
 # Use fixed nodePort for traefik http https
-while ! kubectl -n kube-system get svc traefik; do sleep 5; done
-kubectl -n kube-system patch svc traefik --type=json -p '[{"op":"replace","path":"/spec/ports/0/nodePort","value":30080},{"op":"replace","path":"/spec/ports/1/nodePort","value":30443}]'
+# while ! kubectl -n kube-system get svc traefik; do sleep 5; done
+# kubectl -n kube-system patch svc traefik --type=json -p '[{"op":"replace","path":"/spec/ports/0/nodePort","value":30080},{"op":"replace","path":"/spec/ports/1/nodePort","value":30443}]'
 
-if [ "${HELM_VERSION#3.}" = "$HELM_VERSION" ]; then
-  # Helm 2
-  curl -sSL https://storage.googleapis.com/kubernetes-helm/helm-v$HELM_VERSION-linux-amd64.tar.gz | tar -xz -C /usr/local/bin/ --strip-components 1 linux-amd64/helm
-else
-  # Helm 3
-  curl -sSL https://get.helm.sh/helm-v$HELM_VERSION-linux-amd64.tar.gz | tar -xz -C /usr/local/bin/ --strip-components 1 linux-amd64/helm
-fi
-chmod a+x /usr/local/bin/helm
-ln -s ../bin/helm /usr/local/sbin/helm
-
-if [ "${HELM_VERSION#3.}" = "$HELM_VERSION" ]; then
-  # Helm 2
-  kubectl --namespace kube-system create serviceaccount tiller
-  kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
-  helm --kubeconfig /etc/rancher/k3s/k3s.yaml init --service-account tiller
-fi
-
+# Local customisations for vagrant user
 echo export "TERM=${TERM#screen.}" >> /home/vagrant/.bash_profile
 cat << EOF > /home/vagrant/.inputrc
 "\e[B": history-search-forward
 "\e[A": history-search-backward
 EOF
 
-# To install Calico instead of flannel
-#
-# 1. Set:
-#    K3S_SERVER_FLAGS="--tls-san 192.168.99.100 --no-flannel"
-# 2. After `sh install-k3s.sh` run:
-#    curl -sSfLO https://docs.projectcalico.org/v3.7/manifests/calico.yaml
-#    sed -i.bak -e 's%192.168.0.0/16%10.42.0.0/16%' calico.yaml
-#    kubectl apply -f calico.yaml
-#
-# Note traefik is currently broken on k3s with Calico
+chown vagrant:vagrant /home/vagrant/.bash_profile /home/vagrant/.inputrc
+
+echo "Run"
+echo "vagrant ssh -- sudo cat /etc/rancher/k3s/k3s-ext.yaml > k3s.yaml"
+echo "to fetch the kubeconfig file"
