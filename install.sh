@@ -5,9 +5,19 @@
 set -eux
 
 K3S_VERSION=v1.19.2+k3s1
-HELM_VERSION=v3.3.0
+HELM_VERSION=v3.3.4
 IP_ADDRESS=`ip -o -4 addr show eth0 | awk '{print $4}' | cut -d/ -f1`
-K3S_SERVER_FLAGS="--tls-san $IP_ADDRESS"
+# If set to 1 use docker, otherwise use containerd
+# https://rancher.com/docs/k3s/latest/en/advanced/#using-docker-as-the-container-runtime
+DOCKER=
+K3S_SERVER_FLAGS=
+
+if [ "${DOCKER}" = "1" -a ! -x /usr/bin/docker ]; then
+  curl -sf https://releases.rancher.com/install-docker/19.03.sh | sh -s
+  K3S_SERVER_FLAGS=--docker
+  # v1.19.2+k3s1 fails
+  K3S_VERSION=v1.18.9+k3s1
+fi
 
 if [ -f /etc/centos-release ]; then
   # https://rancher.com/docs/k3s/latest/en/advanced/#experimental-selinux-support
@@ -26,8 +36,7 @@ curl -sfL https://get.k3s.io | \
   --disable traefik \
   --disable-network-policy \
   --flannel-backend=none \
-
-  # --docker
+  ${K3S_SERVER_FLAGS}
 
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 export PATH=/usr/local/bin:$PATH

@@ -2,7 +2,8 @@
 # vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
-  config.vm.box = "centos/8"
+  # centos/8 not yet supported by K3s
+  config.vm.box = "centos/7"
   #config.vm.box = "ubuntu/bionic64"
   config.vm.hostname = "k3s"
 
@@ -26,4 +27,12 @@ Vagrant.configure("2") do |config|
 
   config.vm.provision "shell",
     path: "install.sh"
+
+  # https://stackoverflow.com/a/31153912
+  config.vm.provision "shell" do |s|
+    ssh_pub_key = File.readlines("#{Dir.home}/.ssh/id_rsa.pub").first.strip
+    s.inline = <<-SHELL
+      echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys
+    SHELL
+  end
 end
